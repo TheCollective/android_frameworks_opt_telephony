@@ -582,6 +582,35 @@ public final class Telephony {
              * be 'unassigned/0x...', where '...' is the hex value of the unassigned parameter.  If
              * a parameter has No-Value the value in the map will be null.</p>
              */
+             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+             public static final String MOCK_SMS_RECEIVED_ACTION =
+             "android.provider.Telephony.MOCK_SMS_RECEIVED";
+
+            /**
+             * Broadcast Action: A new WAP PUSH message has been received by the
+             * device. The intent will have the following extra
+             * values:</p>
+             *
+             * <ul>
+             *   <li><em>transactionId (Integer)</em> - The WAP transaction ID</li>
+             *   <li><em>pduType (Integer)</em> - The WAP PDU type</li>
+             *   <li><em>header (byte[])</em> - The header of the message</li>
+             *   <li><em>data (byte[])</em> - The data payload of the message</li>
+             *   <li><em>contentTypeParameters (HashMap&lt;String,String&gt;)</em>
+             *   - Any parameters associated with the content type
+             *   (decoded from the WSP Content-Type header)</li>
+             * </ul>
+             *
+             * <p>If a BroadcastReceiver encounters an error while processing
+             * this intent it should set the result code appropriately.</p>
+             *
+             * <p>The contentTypeParameters extra value is map of content parameters keyed by
+             * their names.</p>
+             *
+             * <p>If any unassigned well-known parameters are encountered, the key of the map will
+             * be 'unassigned/0x...', where '...' is the hex value of the unassigned parameter.  If
+             * a parameter has No-Value the value in the map will be null.</p>
+             */
             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
             public static final String WAP_PUSH_RECEIVED_ACTION =
                     "android.provider.Telephony.WAP_PUSH_RECEIVED";
