@@ -164,20 +164,6 @@ public abstract class IccRecords extends Handler implements IccConstants {
     public abstract void onReady();
 
     //***** Public Methods
-
-    /*
-     * Called to indicate that anyone could request records
-     * in the future after this call, once records are loaded and registrants
-     * have been notified. This indication could be used
-     * to optimize when to actually fetch records from the card. We
-     * don't need to fetch records from the card if it is of no use
-     * to anyone
-     *
-     */
-    void recordsRequired() {
-        return;
-    }
-
     public AdnRecordCache getAdnCache() {
         return mAdnCache;
     }
@@ -478,8 +464,9 @@ public abstract class IccRecords extends Handler implements IccConstants {
      *
      * @param line to enable/disable
      * @param enable
+     * @param number to which CFU is enabled
      */
-    public void setVoiceCallForwardingFlag(int line, boolean enable) {
+    public void setVoiceCallForwardingFlag(int line, boolean enable, String number) {
     }
 
     /**

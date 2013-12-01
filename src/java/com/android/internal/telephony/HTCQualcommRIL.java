@@ -25,7 +25,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.Parcel;
 import android.os.SystemProperties;
-import android.provider.Settings;
 import android.text.TextUtils;
 import android.telephony.CellInfo;
 import android.telephony.Rlog;
@@ -47,7 +46,6 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
     private static final int RIL_UNSOL_RESPONSE_VOICE_RADIO_TECH_CHANGED = 21004;
     private static final int RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED = 21005;
     private static final int RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED = 21007;
-    private static final int RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED_M7 = 5757;
 
     public HTCQualcommRIL(Context context, int networkMode, int cdmaSubscription) {
         super(context, networkMode, cdmaSubscription);
@@ -56,13 +54,11 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
     @Override
     protected Object
     responseIccCardStatus(Parcel p) {
-        // get type from Settings.Global default to CDMA + LTE network mode
+        // force CDMA + LTE network mode
         boolean forceCdmaLte = needsOldRilFeature("forceCdmaLteNetworkType");
+
         if (forceCdmaLte) {
-            int phoneType = android.provider.Settings.Global.getInt(mContext.getContentResolver(),
-                            android.provider.Settings.Global.PREFERRED_NETWORK_MODE,
-                            NETWORK_MODE_LTE_CDMA_EVDO);
-            setPreferredNetworkType(phoneType, null);
+            setPreferredNetworkType(NETWORK_MODE_LTE_CDMA_EVDO, null);
         }
 
         return super.responseIccCardStatus(p);
@@ -100,31 +96,6 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
         return dataCall;
     }
 
-    // Ignore invalid CellInfo data rather than throwing exceptions
-    @Override
-    protected ArrayList<CellInfo> responseCellInfoList(Parcel p) {
-        int numberOfInfoRecs;
-        ArrayList<CellInfo> response;
-
-        /**
-         * Loop through all of the information records unmarshalling them
-         * and converting them to Java Objects.
-         */
-        numberOfInfoRecs = p.readInt();
-        response = new ArrayList<CellInfo>(numberOfInfoRecs);
-
-        for (int i = 0; i < numberOfInfoRecs; i++) {
-            int dataPosition = p.dataPosition(); // save position
-            int type = p.readInt();
-            if(type >= 1 && type <= 4) { // Types 1-4 valid; see CellInfo.java
-                p.setDataPosition(dataPosition); // rewind
-                CellInfo InfoRec = CellInfo.CREATOR.createFromParcel(p);
-                response.add(InfoRec);
-            }
-        }
-        return response;
-    }
-
     @Override
     protected void
     processUnsolicited (Parcel p) {
@@ -141,7 +112,6 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
             case RIL_UNSOL_RESPONSE_VOICE_RADIO_TECH_CHANGED: ret = responseVoid(p); break;
             case RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED: ret = responseVoid(p); break;
             case RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED: ret = responseVoid(p); break;
-            case RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED_M7: ret = responseVoid(p); break;
             case RIL_UNSOL_RIL_CONNECTED: ret = responseInts(p); break;
 
             default:
@@ -158,22 +128,10 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
             case RIL_UNSOL_CDMA_3G_INDICATOR:
             case RIL_UNSOL_CDMA_ENHANCE_ROAMING_INDICATOR:
             case RIL_UNSOL_CDMA_NETWORK_BASE_PLUSCODE_DIAL:
+            case RIL_UNSOL_RESPONSE_PHONE_MODE_CHANGE:
+            case RIL_UNSOL_RESPONSE_VOICE_RADIO_TECH_CHANGED:
             case RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED:
-            case RIL_UNSOL_RESPONSE_PHONE_MODE_CHANGE: {
-                /* Unhandled HTC responses */
-                break;
-            }
-            case RIL_UNSOL_RESPONSE_VOICE_RADIO_TECH_CHANGED: {
-                if (RILJ_LOGD) unsljLogRet(response, ret);
-
-                if (mVoiceRadioTechChangedRegistrants != null) {
-                    mVoiceRadioTechChangedRegistrants.notifyRegistrants(
-                                        new AsyncResult(null, ret, null));
-                }
-                break;
-            }
-            case RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED_M7:
-            case RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED: {
+            case RIL_UNSOL_RESPONSE_DATA_NETWORK_STATE_CHANGED:
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
                 if (mExitEmergencyCallbackModeRegistrants != null) {
@@ -181,7 +139,6 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
                                         new AsyncResult (null, null, null));
                 }
                 break;
-            }
             case RIL_UNSOL_RIL_CONNECTED: {
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
@@ -192,10 +149,7 @@ public class HTCQualcommRIL extends RIL implements CommandsInterface {
                 // Trigger socket reset if RIL connect is called again
                 SystemProperties.set("ril.socket.reset", "1");
                 setPreferredNetworkType(mPreferredNetworkType, null);
-                int cdmaSubscription = Settings.Global.getInt(mContext.getContentResolver(), Settings.Global.CDMA_SUBSCRIPTION_MODE, -1);
-                if(cdmaSubscription != -1) {
-                    setCdmaSubscriptionSource(cdmaSubscription, null);
-                }
+                setCdmaSubscriptionSource(mCdmaSubscription, null);
                 setCellInfoListRate(Integer.MAX_VALUE, null);
                 notifyRegistrantsRilConnectionChanged(((int[])ret)[0]);
                 break;

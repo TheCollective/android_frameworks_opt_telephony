@@ -19,11 +19,15 @@ package com.android.internal.telephony;
 import java.util.ArrayList;
 import java.util.List;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.AppOpsManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
 import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -98,18 +102,28 @@ public class IccSmsInterfaceManagerProxy extends ISms.Stub {
     private Context mContext;
     private PowerManager.WakeLock mWakeLock;
     private static final int WAKE_LOCK_TIMEOUT = 5000;
+    private final Handler mHandler = new Handler();
     private void dispatchPdus(byte[][] pdus) {
-        Intent intent = new Intent(Intents.SMS_RECEIVED_ACTION);
+        Intent intent = new Intent(Intents.SMS_DELIVER_ACTION);
+        // Direct the intent to only the default SMS app. If we can't find a default SMS app
+        // then sent it to all broadcast receivers.
+        ComponentName componentName = SmsApplication.getDefaultSmsApplication(mContext, true);
+        if (componentName == null)
+            return;
+        // Deliver SMS message only to this receiver
+        intent.setComponent(componentName);
         intent.putExtra("pdus", pdus);
         intent.putExtra("format", SmsMessage.FORMAT_SYNTHETIC);
-        dispatch(intent, SMSDispatcher.RECEIVE_SMS_PERMISSION);
+        dispatch(intent, Manifest.permission.RECEIVE_SMS);
     }
 
     private void dispatch(Intent intent, String permission) {
         // Hold a wake lock for WAKE_LOCK_TIMEOUT seconds, enough to give any
         // receivers time to take their own wake locks.
         mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
-        mContext.sendOrderedBroadcast(intent, permission);
+        intent.addFlags(Intent.FLAG_RECEIVER_NO_ABORT);
+        mContext.sendOrderedBroadcast(intent, permission, AppOpsManager.OP_RECEIVE_SMS, null,
+                mHandler, Activity.RESULT_OK, null, null);
     }
 
     public void synthesizeMessages(String originatingAddress, String scAddress, List<String> messages, long timestampMillis) throws RemoteException {
@@ -149,7 +163,8 @@ public class IccSmsInterfaceManagerProxy extends ISms.Stub {
 
     private void broadcastOutgoingSms(String callingPackage, String destAddr, String scAddr,
             boolean multipart, ArrayList<String> parts,
-            ArrayList<PendingIntent> sentIntents, ArrayList<PendingIntent> deliveryIntents) {
+            ArrayList<PendingIntent> sentIntents, ArrayList<PendingIntent> deliveryIntents,
+            int priority) {
         Intent broadcast = new Intent(Intent.ACTION_NEW_OUTGOING_SMS);
         broadcast.putExtra("destAddr", destAddr);
         broadcast.putExtra("scAddr", scAddr);
@@ -159,6 +174,7 @@ public class IccSmsInterfaceManagerProxy extends ISms.Stub {
         broadcast.putStringArrayListExtra("parts", parts);
         broadcast.putParcelableArrayListExtra("sentIntents", sentIntents);
         broadcast.putParcelableArrayListExtra("deliveryIntents", deliveryIntents);
+        broadcast.putExtra("priority", priority);
         mContext.sendOrderedBroadcastAsUser(broadcast, UserHandle.OWNER,
                 android.Manifest.permission.INTERCEPT_SMS,
                 mReceiver, null, Activity.RESULT_OK, destAddr, null);
@@ -176,7 +192,8 @@ public class IccSmsInterfaceManagerProxy extends ISms.Stub {
         sentIntents.add(sentIntent);
         ArrayList<PendingIntent> deliveryIntents = new ArrayList<PendingIntent>();
         deliveryIntents.add(deliveryIntent);
-        broadcastOutgoingSms(callingPackage, destAddr, scAddr, false, parts, sentIntents, deliveryIntents);
+        broadcastOutgoingSms(callingPackage, destAddr, scAddr, false, parts, sentIntents,
+                deliveryIntents, -1);
     }
 
     @Override
@@ -186,10 +203,9 @@ public class IccSmsInterfaceManagerProxy extends ISms.Stub {
         mContext.enforceCallingPermission(
                 android.Manifest.permission.SEND_SMS,
                 "Sending SMS message");
-        broadcastOutgoingSms(callingPackage, destAddr, scAddr, true,
-                parts != null ? new ArrayList<String>(parts) : null,
-                sentIntents != null ? new ArrayList<PendingIntent>(sentIntents) : null,
-                deliveryIntents != null ?  new ArrayList<PendingIntent>(deliveryIntents) : null);
+        broadcastOutgoingSms(callingPackage, destAddr, scAddr, true, new ArrayList<String>(parts),
+                new ArrayList<PendingIntent>(sentIntents), new ArrayList<PendingIntent>(deliveryIntents),
+                -1);
     }
 
     @Override
@@ -222,5 +238,15 @@ public class IccSmsInterfaceManagerProxy extends ISms.Stub {
     @Override
     public void setPremiumSmsPermission(String packageName, int permission) {
         mIccSmsInterfaceManager.setPremiumSmsPermission(packageName, permission);
+    }
+
+    @Override
+    public boolean isImsSmsSupported() throws RemoteException {
+        return mIccSmsInterfaceManager.isImsSmsSupported();
+    }
+
+    @Override
+    public String getImsSmsFormat() throws RemoteException {
+        return mIccSmsInterfaceManager.getImsSmsFormat();
     }
 }

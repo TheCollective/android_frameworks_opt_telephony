@@ -18,10 +18,7 @@ package com.android.internal.telephony;
 
 import com.android.internal.telephony.sip.SipPhone;
 
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.media.AudioManager;
 import android.os.AsyncResult;
 import android.os.Handler;
@@ -106,8 +103,6 @@ public final class CallManager {
 
     private boolean mSpeedUpAudioForMtCall = false;
 
-    private boolean mRingVolumeReceiverIsRegistered = false;
-
     // state registrants
     protected final RegistrantList mPreciseCallStateRegistrants
     = new RegistrantList();
@@ -174,20 +169,6 @@ public final class CallManager {
 
     protected final RegistrantList mPostDialCharacterRegistrants
     = new RegistrantList();
-
-    private BroadcastReceiver mRingVolumeChangeReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            int streamType = intent.getIntExtra(AudioManager.EXTRA_VOLUME_STREAM_TYPE, -1);
-            if (getState() == PhoneConstants.State.RINGING && streamType == AudioManager.STREAM_RING) {
-                int oldVolume = intent.getIntExtra(AudioManager.EXTRA_PREV_VOLUME_STREAM_VALUE, -1);
-                int newVolume = intent.getIntExtra(AudioManager.EXTRA_VOLUME_STREAM_VALUE, -1);
-                if (oldVolume == 0 || newVolume == 0) {
-                    updateRingingAudioFocus(context);
-                }
-            }
-        }
-    };
 
     private CallManager() {
         mPhones = new ArrayList<Phone>();
@@ -397,12 +378,10 @@ public final class CallManager {
         if (context == null) return;
         AudioManager audioManager = (AudioManager)
                 context.getSystemService(Context.AUDIO_SERVICE);
-        PhoneConstants.State state = getState();
-        int lastAudioMode = audioManager.getMode();
 
         // change the audio mode and request/abandon audio focus according to phone state,
         // but only on audio mode transitions
-        switch (state) {
+        switch (getState()) {
             case RINGING:
                 int curAudioMode = audioManager.getMode();
                 if (curAudioMode != AudioManager.MODE_RINGTONE) {
@@ -444,7 +423,7 @@ public final class CallManager {
                 mSpeedUpAudioForMtCall = false;
                 break;
             case IDLE:
-                if (lastAudioMode != AudioManager.MODE_NORMAL) {
+                if (audioManager.getMode() != AudioManager.MODE_NORMAL) {
                     audioManager.setMode(AudioManager.MODE_NORMAL);
                     if (VDBG) Rlog.d(LOG_TAG, "abandonAudioFocus");
                     // abandon audio focus after the mode has been set back to normal
@@ -453,54 +432,6 @@ public final class CallManager {
                 mSpeedUpAudioForMtCall = false;
                 break;
         }
-
-        if (!mRingVolumeReceiverIsRegistered && state == PhoneConstants.State.RINGING) {
-            context.registerReceiver(mRingVolumeChangeReceiver,
-                    new IntentFilter(AudioManager.VOLUME_CHANGED_ACTION));
-            mRingVolumeReceiverIsRegistered = true;
-        } else if (mRingVolumeReceiverIsRegistered && state != PhoneConstants.State.RINGING) {
-            context.unregisterReceiver(mRingVolumeChangeReceiver);
-            mRingVolumeReceiverIsRegistered = false;
-        }
-
-        // Set additional audio parameters needed for incall audio
-        String[] audioParams = context.getResources().getStringArray(com.android.internal.R.array.config_telephony_set_audioparameters);
-        String[] aPValues;
-
-        for (String parameter : audioParams) {
-            aPValues = parameter.split("=");
-
-            if(aPValues[1] == null || aPValues[1].length() == 0) {
-                aPValues[1] = "on";
-            }
-
-            if(aPValues[2] == null || aPValues[2].length() == 0) {
-                aPValues[2] = "off";
-            }
-
-            if (audioManager.getMode() == AudioManager.MODE_IN_CALL) {
-                Rlog.d(LOG_TAG, "setAudioMode(): " + aPValues[0] + "=" + aPValues[1]);
-                audioManager.setParameters(aPValues[0] + "=" + aPValues[1]);
-            } else if (audioManager.getMode() == AudioManager.MODE_NORMAL) {
-                Rlog.d(LOG_TAG, "setAudioMode(): " + aPValues[0] + "=" + aPValues[2]);
-                audioManager.setParameters(aPValues[0] + "=" + aPValues[2]);
-            }
-        }
-    }
-
-    private void updateRingingAudioFocus(Context context) {
-        AudioManager audioManager = (AudioManager)
-                context.getSystemService(Context.AUDIO_SERVICE);
-        int hint = audioManager.getStreamVolume(AudioManager.STREAM_RING) == 0
-                // make user aware of an incoming call by
-                // attenuating the music he may be listening to
-                ? AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-                        // if we're going to play the ring tone, silence
-                        // other sound sources
-                        : AudioManager.AUDIOFOCUS_GAIN_TRANSIENT;
-
-        if (VDBG) Rlog.d(LOG_TAG, "requestAudioFocus on STREAM_RING");
-        audioManager.requestAudioFocusForCall(AudioManager.STREAM_RING, hint);
     }
 
     private Context getContext() {
@@ -746,7 +677,7 @@ public final class CallManager {
                 if (foregroundPhone == backgroundPhone) {
                     getActiveFgCall().hangup();
                 } else {
-                    // the call to be hangup and resumed belongs to different phones
+                // the call to be hangup and resumed belongs to different phones
                     getActiveFgCall().hangup();
                     switchHoldingAndActive(heldCall);
                 }
@@ -891,7 +822,6 @@ public final class CallManager {
      * Phone can make a call only if ALL of the following are true:
      *        - Phone is not powered off
      *        - There's no incoming or waiting call
-     *        - There's available call slot in either foreground or background
      *        - The foreground call is ACTIVE or IDLE or DISCONNECTED.
      *          (We mainly need to make sure it *isn't* DIALING or ALERTING.)
      * @param phone
@@ -900,24 +830,17 @@ public final class CallManager {
     private boolean canDial(Phone phone) {
         int serviceState = phone.getServiceState().getState();
         boolean hasRingingCall = hasActiveRingingCall();
-        boolean hasActiveCall = hasActiveFgCall();
-        boolean hasHoldingCall = hasActiveBgCall();
-        boolean allLinesTaken = hasActiveCall && hasHoldingCall;
         Call.State fgCallState = getActiveFgCallState();
 
         boolean result = (serviceState != ServiceState.STATE_POWER_OFF
                 && !hasRingingCall
-                && !allLinesTaken
                 && ((fgCallState == Call.State.ACTIVE)
-                        || (fgCallState == Call.State.IDLE)
-                        || (fgCallState == Call.State.DISCONNECTED)));
+                    || (fgCallState == Call.State.IDLE)
+                    || (fgCallState == Call.State.DISCONNECTED)));
 
         if (result == false) {
             Rlog.d(LOG_TAG, "canDial serviceState=" + serviceState
                             + " hasRingingCall=" + hasRingingCall
-                            + " hasActiveCall=" + hasActiveCall
-                            + " hasHoldingCall=" + hasHoldingCall
-                            + " allLinesTaken=" + allLinesTaken
                             + " fgCallState=" + fgCallState);
         }
         return result;
@@ -1675,7 +1598,7 @@ public final class CallManager {
         if (call == null) {
             call = (mDefaultPhone == null)
                     ? null
-                            : mDefaultPhone.getForegroundCall();
+                    : mDefaultPhone.getForegroundCall();
         }
         return call;
     }
@@ -1712,7 +1635,7 @@ public final class CallManager {
         if (call == null) {
             call = (mDefaultPhone == null)
                     ? null
-                            : mDefaultPhone.getBackgroundCall();
+                    : mDefaultPhone.getBackgroundCall();
         }
         return call;
     }
@@ -1735,7 +1658,7 @@ public final class CallManager {
         if (call == null) {
             call = (mDefaultPhone == null)
                     ? null
-                            : mDefaultPhone.getRingingCall();
+                    : mDefaultPhone.getRingingCall();
         }
         return call;
     }

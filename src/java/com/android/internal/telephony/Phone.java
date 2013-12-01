@@ -103,7 +103,6 @@ public interface Phone {
     static final String REASON_DATA_DEPENDENCY_UNMET = "dependencyUnmet";
     static final String REASON_LOST_DATA_CONNECTION = "lostDataConnection";
     static final String REASON_CONNECTED = "connected";
-    static final String REASON_NV_READY = "nvReady";
 
     // Used for band mode selection methods
     static final int BM_UNSPECIFIED = 0; // selected by baseband automatically
@@ -1388,11 +1387,6 @@ public interface Phone {
     public PhoneSubInfo getPhoneSubInfo();
 
     /**
-     * Retrieves the IccSmsInterfaceManager of the Phone
-     */
-    public IccSmsInterfaceManager getIccSmsInterfaceManager();
-
-    /**
      * Retrieves the IccPhoneBookInterfaceManager of the Phone
      */
     public IccPhoneBookInterfaceManager getIccPhoneBookInterfaceManager();
@@ -1727,4 +1721,11 @@ public interface Phone {
      * Remove references to external object stored in this object.
      */
     void removeReferences();
+
+    /**
+     * Update the phone object if the voice radio technology has changed
+     *
+     * @param voiceRadioTech The new voice radio technology
+     */
+    void updatePhoneObject(int voiceRadioTech);
 }

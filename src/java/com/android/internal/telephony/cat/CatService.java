@@ -20,6 +20,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.res.Resources.NotFoundException;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -32,7 +33,6 @@ import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccCardApplication;
-import com.android.internal.telephony.TelephonyProperties;
 
 
 import java.io.ByteArrayOutputStream;
@@ -104,6 +104,9 @@ public class CatService extends Handler implements AppInterface {
     private static final int DEV_ID_KEYPAD      = 0x01;
     private static final int DEV_ID_UICC        = 0x81;
     private static final int DEV_ID_TERMINAL    = 0x82;
+    private static final int DEV_ID_NETWORK     = 0x83;
+
+    static final String STK_DEFAULT = "Default Message";
 
     // Samsung STK SEND_SMS
     static final int WAITING_SMS_RESULT = 2;
@@ -112,7 +115,6 @@ public class CatService extends Handler implements AppInterface {
     static final int SMS_SEND_OK = 0;
     static final int SMS_SEND_FAIL = 32790;
     static final int SMS_SEND_RETRY = 32810;
-    static final String STK_DEFAULT = "Defualt Message";
 
     /* Intentionally private for singleton */
     private CatService(CommandsInterface ci, UiccCardApplication ca, IccRecords ir,
@@ -297,7 +299,6 @@ public class CatService extends Handler implements AppInterface {
                 if (cmdParams instanceof SendUSSDParams) {
                     handleProactiveCommandSendUSSD((SendUSSDParams) cmdParams);
                 }
-
                 if ((((DisplayTextParams)cmdParams).mTextMsg.text != null)
                         && (((DisplayTextParams)cmdParams).mTextMsg.text.equals(STK_DEFAULT))) {
                     message = mContext.getText(com.android.internal.R.string.sending);
@@ -318,24 +319,27 @@ public class CatService extends Handler implements AppInterface {
             case RECEIVE_DATA:
             case SEND_DATA:
                 BIPClientParams cmd = (BIPClientParams) cmdParams;
-                /*
-                 * If the text mesg is null, need to send the response
-                 * back to the card in the following scenarios
-                 * - It has alpha ID tag with no Text Msg (or)
-                 * - If alphaUsrCnf is not set. In the above cases
-                 *   there should be no UI indication given to the user.
+                /* Per 3GPP specification 102.223,
+                 * if the alpha identifier is not provided by the UICC,
+                 * the terminal MAY give information to the user
+                 * noAlphaUsrCnf defines if you need to show user confirmation or not
                  */
-                boolean alphaUsrCnf = SystemProperties.getBoolean(
-                         TelephonyProperties.PROPERTY_ALPHA_USRCNF, false);
-                CatLog.d(this, "alphaUsrCnf: " + alphaUsrCnf + ", bHasAlphaId: " + cmd.mHasAlphaId);
-
-                if (( cmd.mTextMsg.text == null) && ( cmd.mHasAlphaId || !alphaUsrCnf)) {
+                boolean noAlphaUsrCnf = false;
+                try {
+                    noAlphaUsrCnf = mContext.getResources().getBoolean(
+                            com.android.internal.R.bool.config_stkNoAlphaUsrCnf);
+                } catch (NotFoundException e) {
+                    noAlphaUsrCnf = false;
+                }
+                if ((cmd.mTextMsg.text == null) && (cmd.mHasAlphaId || noAlphaUsrCnf)) {
                     CatLog.d(this, "cmd " + cmdParams.getCommandType() + " with null alpha id");
                     // If alpha length is zero, we just respond with OK.
                     if (isProactiveCmd) {
-                        sendTerminalResponse(cmdParams.mCmdDet, ResultCode.OK, false, 0, null);
-                    } else if (cmdParams.getCommandType() == CommandType.OPEN_CHANNEL) {
-                        mCmdIf.handleCallSetupRequestFromSim(true, null);
+                        if (cmdParams.getCommandType() == CommandType.OPEN_CHANNEL) {
+                            mCmdIf.handleCallSetupRequestFromSim(true, null);
+                        } else {
+                            sendTerminalResponse(cmdParams.mCmdDet, ResultCode.OK, false, 0, null);
+                        }
                     }
                     return;
                 }
@@ -811,6 +815,8 @@ public class CatService extends Handler implements AppInterface {
             case DISPLAY_TEXT:
             case LAUNCH_BROWSER:
                 break;
+            // 3GPP TS.102.223: Open Channel alpha confirmation should not send TR
+            case OPEN_CHANNEL:
             case SET_UP_CALL:
                 mCmdIf.handleCallSetupRequestFromSim(resMsg.mUsersConfirm, null);
                 // No need to send terminal response for SET UP CALL. The user's

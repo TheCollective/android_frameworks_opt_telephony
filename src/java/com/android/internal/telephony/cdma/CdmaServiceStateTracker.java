@@ -206,6 +206,8 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
     @Override
     public void dispose() {
         checkCorrectThread();
+        log("ServiceStateTracker dispose");
+
         // Unregister for all events.
         mCi.unregisterForRadioStateChanged(this);
         mCi.unregisterForVoiceNetworkStateChanged(this);
@@ -296,6 +298,8 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
             break;
 
         case EVENT_NV_READY:
+            updatePhoneObject();
+
             // For Non-RUIM phones, the subscription information is stored in
             // Non Volatile. Here when Non-Volatile is ready, we can poll the CDMA
             // subscription info.
@@ -451,6 +455,8 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
             break;
 
         case EVENT_RUIM_RECORDS_LOADED:
+            log("EVENT_RUIM_RECORDS_LOADED: what=" + msg.what);
+            updatePhoneObject();
             updateSpnDisplay();
             break;
 
@@ -798,14 +804,23 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
             if (TextUtils.isEmpty(mPrlVersion)) {
                 isPrlLoaded = false;
             }
-            if (!isPrlLoaded) {
+            if (!isPrlLoaded || (mNewSS.getRilVoiceRadioTechnology()
+                                        == ServiceState.RIL_RADIO_TECHNOLOGY_UNKNOWN)) {
+                log("Turn off roaming indicator if !isPrlLoaded or voice RAT is unknown");
                 mNewSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_OFF);
             } else if (!isSidsAllZeros()) {
                 if (!namMatch && !mIsInPrl) {
                     // Use default
                     mNewSS.setCdmaRoamingIndicator(mDefaultRoamingIndicator);
                 } else if (namMatch && !mIsInPrl) {
-                    mNewSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_FLASH);
+                    // TODO this will be removed when we handle roaming on LTE on CDMA+LTE phones
+                    if (mNewSS.getRilVoiceRadioTechnology()
+                            == ServiceState.RIL_RADIO_TECHNOLOGY_LTE) {
+                        log("Turn off roaming indicator as voice is LTE");
+                        mNewSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_OFF);
+                    } else {
+                        mNewSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_FLASH);
+                    }
                 } else if (!namMatch && mIsInPrl) {
                     // Use the one from PRL/ERI
                     mNewSS.setCdmaRoamingIndicator(mRoamingIndicator);
@@ -988,6 +1003,9 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
         boolean hasCdmaDataConnectionChanged =
                        mSS.getDataRegState() != mNewSS.getDataRegState();
 
+        boolean hasRilVoiceRadioTechnologyChanged =
+                mSS.getRilVoiceRadioTechnology() != mNewSS.getRilVoiceRadioTechnology();
+
         boolean hasRilDataRadioTechnologyChanged =
                 mSS.getRilDataRadioTechnology() != mNewSS.getRilDataRadioTechnology();
 
@@ -1018,7 +1036,9 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
         mCellLoc = mNewCellLoc;
         mNewCellLoc = tcl;
 
-        mNewSS.setStateOutOfService(); // clean slate for next time
+        if (hasRilVoiceRadioTechnologyChanged) {
+            updatePhoneObject();
+        }
 
         if (hasRilDataRadioTechnologyChanged) {
             mPhone.setSystemProperty(TelephonyProperties.PROPERTY_DATA_NETWORK_TYPE,
@@ -1096,6 +1116,7 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
         }
 
         if (hasCdmaDataConnectionChanged || hasRilDataRadioTechnologyChanged) {
+            notifyDataRegStateRilRadioTechnologyChanged();
             mPhone.notifyDataConnection(null);
         }
 
